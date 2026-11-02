@@ -415,13 +415,24 @@ export class SecurityMQTTService extends TypedEmitter<SecurityMQTTServiceEvents>
     }
 
     const topics = [this.getMqttTopic(deviceModel, deviceSN, "res"), this.getMqttTopic(deviceModel, deviceSN, "req")];
+    // Ebnet diagnostic: these locks report model T85D0C, but the protocol notes show topics under
+    // the five-character type T85D0. Listen on that prefix too (cmd and biz) to see where heartbeats arrive.
+    const prefix = deviceModel.substring(0, 5);
+    if (prefix !== deviceModel) {
+      topics.push(
+        `cmd/eufy_security/${prefix}/${deviceSN}/res`,
+        `cmd/eufy_security/${prefix}/${deviceSN}/req`,
+        `biz/eufy_security/${prefix}/${deviceSN}/res`
+      );
+    }
+    topics.push(`biz/eufy_security/${deviceModel}/${deviceSN}/res`);
 
     for (const topic of topics) {
-      this.client.subscribe(topic, { qos: 1 }, (err) => {
+      this.client.subscribe(topic, { qos: 1 }, (err, granted) => {
         if (err) {
           rootMQTTLogger.error(`SecurityMQTT subscribe failed: ${topic}`, { error: getError(err) });
         } else {
-          rootMQTTLogger.info(`SecurityMQTT subscribed: ${topic}`);
+          rootMQTTLogger.info(`SecurityMQTT subscribed: ${topic}`, { grantedQos: granted?.[0]?.qos });
         }
       });
     }
