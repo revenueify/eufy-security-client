@@ -195,6 +195,9 @@ export class SecurityMQTTService extends TypedEmitter<SecurityMQTTServiceEvents>
     this.client.on("close", () => {
       this.connectionState = ConnectionState.DISCONNECTED;
       rootMQTTLogger.info("SecurityMQTT connection closed");
+      // clean: true means the broker drops our subscriptions on disconnect.
+      // Forget them so the next "connect" subscribes every lock again.
+      this.subscribedLocks.clear();
       this.emit("close");
     });
 

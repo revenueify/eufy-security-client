@@ -142,6 +142,8 @@ export class EufySecurity extends TypedEmitter<EufySecurityEvents> {
   private pushService!: PushNotificationService;
   private mqttService!: MQTTService;
   private securityMqttService: SecurityMQTTService | null = null;
+  /** Lock commands sent over security MQTT that the lock has not confirmed yet. */
+  private securityMqttPending: Map<string, { lock: boolean; timers: NodeJS.Timeout[] }> = new Map();
   private pushCloudRegistered = false;
   private pushCloudChecked = false;
   private persistentFile!: string;
@@ -464,6 +466,7 @@ export class EufySecurity extends TypedEmitter<EufySecurityEvents> {
       this.securityMqttService.on("lock status", (deviceSN, locked, battery) => {
         this.getDevice(deviceSN)
           .then((device) => {
+            this.clearSecurityMqttPending(deviceSN);
             device.updateProperty(PropertyName.DeviceLocked, locked);
             // Battery is -1 when the heartbeat didn't include a battery TLV tag
             if (battery >= 0) {
@@ -480,6 +483,16 @@ export class EufySecurity extends TypedEmitter<EufySecurityEvents> {
 
       this.securityMqttService.on("command response", (deviceSN, success) => {
         rootMainLogger.debug("SecurityMQTT command response", { deviceSN, success });
+        const pending = this.securityMqttPending.get(deviceSN);
+        if (pending && success) {
+          this.clearSecurityMqttPending(deviceSN);
+          rootMainLogger.info("SecurityMQTT lock confirmed the command", { deviceSN, lock: pending.lock });
+          this.getDevice(deviceSN)
+            .then((device) => device.updateProperty(PropertyName.DeviceLocked, pending.lock))
+            .catch(() => {
+              /* device not found, ignore */
+            });
+        }
       });
 
       await this.securityMqttService.connect(apiBase);
@@ -2913,19 +2926,45 @@ export class EufySecurity extends TypedEmitter<EufySecurityEvents> {
       .lockDevice(deviceSN, deviceModel, adminUserId, shortUserId, nickName, channel, sequence, lock)
       .then((success) => {
         if (success) {
-          // Optimistically update lock state
-          this.getDevice(deviceSN)
-            .then((device) => {
-              device.updateProperty(PropertyName.DeviceLocked, lock);
-            })
-            .catch(() => {
-              /* device not found, ignore */
-            });
+          // No optimistic update: a publish only means eufy's broker took the message,
+          // not that the lock moved. The state changes when the lock replies (command
+          // response or heartbeat) or when eufy's cloud reports it. Until a reply
+          // arrives, re-read the cloud at 15, 45 and 90 seconds.
+          this.clearSecurityMqttPending(deviceSN);
+          const timers = [15, 45, 90].map((seconds, index, all) =>
+            setTimeout(() => {
+              if (!this.securityMqttPending.has(deviceSN)) return;
+              if (index === all.length - 1) {
+                this.securityMqttPending.delete(deviceSN);
+                rootMainLogger.warn("SecurityMQTT lock never replied to the command; state is from eufy's cloud", {
+                  deviceSN,
+                  lock,
+                });
+              } else {
+                rootMainLogger.info("SecurityMQTT no reply from the lock yet, re-reading eufy's cloud", {
+                  deviceSN,
+                  seconds,
+                });
+              }
+              this.refreshCloudData().catch((err) => {
+                rootMainLogger.error("SecurityMQTT cloud re-read failed", { error: getError(ensureError(err)) });
+              });
+            }, seconds * 1000)
+          );
+          this.securityMqttPending.set(deviceSN, { lock, timers });
         }
       })
       .catch((err) => {
         rootMainLogger.error("SecurityMQTT lock command error", { error: getError(ensureError(err)) });
       });
+  }
+
+  private clearSecurityMqttPending(deviceSN: string): void {
+    const pending = this.securityMqttPending.get(deviceSN);
+    if (pending) {
+      pending.timers.forEach((timer) => clearTimeout(timer));
+      this.securityMqttPending.delete(deviceSN);
+    }
   }
 
   private onDeviceOpen(device: Device, state: boolean): void {
