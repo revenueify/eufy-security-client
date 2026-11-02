@@ -332,6 +332,12 @@ export class SecurityMQTTService extends TypedEmitter<SecurityMQTTServiceEvents>
       throw new Error(`MQTT certs failed: ${JSON.stringify(mqttCertRes.data)}`);
     }
     this.mqttInfo = mqttCertRes.data.data as MQTTCertInfo;
+    // Ebnet diagnostic: the broker host is derived from the API base, not from endpoint_addr,
+    // so log what eufy actually assigned to this account (no secrets).
+    rootMQTTLogger.info("SecurityMQTT cert endpoint", {
+      endpointAddr: this.mqttInfo.endpoint_addr,
+      thingName: this.mqttInfo.thing_name,
+    });
     rootMQTTLogger.debug("SecurityMQTT certs OK", {
       thingName: this.mqttInfo.thing_name,
       endpointAddr: this.mqttInfo.endpoint_addr,
@@ -482,6 +488,9 @@ export class SecurityMQTTService extends TypedEmitter<SecurityMQTTServiceEvents>
    * are parsed by {@link BleLockProtocol}.
    */
   private handleMessage(topic: string, message: Buffer): void {
+    // Ebnet diagnostic: log every arrival (topic and size only) so silence from the lock and
+    // the echo of our own /req publish can be told apart.
+    rootMQTTLogger.info("SecurityMQTT message arrived", { topic: topic, bytes: message.length });
     try {
       const parsed = JSON.parse(message.toString());
 
