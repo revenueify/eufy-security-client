@@ -405,7 +405,9 @@ export class SecurityMQTTService extends TypedEmitter<SecurityMQTTServiceEvents>
   }
 
   private getMqttTopic(deviceModel: string, deviceSN: string, direction: "req" | "res"): string {
-    return `cmd/eufy_security/${deviceModel}/${deviceSN}/${direction}`;
+    // Locks listen and publish under the five-character type (T85D0), not the full model (T85D0C).
+    // Confirmed 2026-11-02: hand lock/unlock heartbeats arrived only on cmd/eufy_security/T85D0/<SN>/res.
+    return `cmd/eufy_security/${deviceModel.substring(0, 5)}/${deviceSN}/${direction}`;
   }
 
   /** Subscribes to request and response MQTT topics for a lock device. */
@@ -415,17 +417,6 @@ export class SecurityMQTTService extends TypedEmitter<SecurityMQTTServiceEvents>
     }
 
     const topics = [this.getMqttTopic(deviceModel, deviceSN, "res"), this.getMqttTopic(deviceModel, deviceSN, "req")];
-    // Ebnet diagnostic: these locks report model T85D0C, but the protocol notes show topics under
-    // the five-character type T85D0. Listen on that prefix too (cmd and biz) to see where heartbeats arrive.
-    const prefix = deviceModel.substring(0, 5);
-    if (prefix !== deviceModel) {
-      topics.push(
-        `cmd/eufy_security/${prefix}/${deviceSN}/res`,
-        `cmd/eufy_security/${prefix}/${deviceSN}/req`,
-        `biz/eufy_security/${prefix}/${deviceSN}/res`
-      );
-    }
-    topics.push(`biz/eufy_security/${deviceModel}/${deviceSN}/res`);
 
     for (const topic of topics) {
       this.client.subscribe(topic, { qos: 1 }, (err, granted) => {
