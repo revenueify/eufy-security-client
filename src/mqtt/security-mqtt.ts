@@ -158,9 +158,7 @@ export class SecurityMQTTService extends TypedEmitter<SecurityMQTTServiceEvents>
       throw new Error("SecurityMQTT: No MQTT certificates after authentication");
     }
 
-    // Ebnet test: connect to the broker eufy assigns in the cert response (endpoint_addr) when present.
-    // The command published on the derived security-mqtt host was echoed back but never answered.
-    const host = this.mqttInfo.endpoint_addr || this.getSecurityBrokerHost(apiBase);
+    const host = this.getSecurityBrokerHost(apiBase);
     this.clientId = this.buildClientId(host);
 
     rootMQTTLogger.info(`SecurityMQTT connecting to ${host}:8883`, {
